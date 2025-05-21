@@ -54,3 +54,9 @@ or from shell
 ```bash
 python -m xlsx2html path/to/example.xlsx path/to/output.html
 ```
+
+# Pacific
+
+Increment the version in setup.py
+make build-wheel
+Copy the wheel directly to the repo you need to use it in
