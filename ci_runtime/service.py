@@ -36,6 +36,7 @@ from ci_runtime.config import (
     UPLOAD_INTERVAL_SECONDS,
     RuntimeSettings,
 )
+from ci_runtime.history_aliases import HistoryAliases
 from ci_runtime.store import RuntimeStore
 from ci_runtime.types import RuntimeHistory, RuntimeManifest, RuntimePlan
 
@@ -60,6 +61,9 @@ class RuntimeService:
                 sorted(settings.split_files),
             ]
         )
+        if settings.single_worker:
+            # Opt-in inventory-only plans cannot reuse measured-plan journals.
+            identity += ":single-worker-v1"
         self.identity = hashlib.sha256(identity.encode()).hexdigest()
         self.checkpoint_key = (
             f"checkpoints/{settings.suite}/{settings.run}/{self.identity}.tgz"
@@ -120,6 +124,11 @@ class RuntimeService:
         return [sorted(ids) for ids in assignments]
 
     def load_history(self) -> None:
+        if self.settings.single_worker:
+            # One worker owns the entire post-marker inventory. Durations cannot
+            # change its assignment; the checkpoint co-publishes that exact plan.
+            self.history = {}
+            return
         if self.settings.history_file is not None:
             plan = RuntimePlan(
                 **json.loads(self.settings.history_file.read_text(encoding="utf-8"))
@@ -158,6 +167,8 @@ class RuntimeService:
             key=lambda o: (o.modified, o.key),
             reverse=True,
         )[:HISTORY_SAMPLES]
+        aliases = HistoryAliases.load(self.settings.history_aliases)
+        observations: dict[tuple[str, float], float] = {}
         samples: dict[str, list[float]] = defaultdict(list)
         for index, obj in enumerate(objects):
             dest = self.state / f"history-{index}.json"
@@ -168,14 +179,22 @@ class RuntimeService:
             raw = json.loads(dest.read_text(encoding="utf-8"))
             if raw["version"] != SCHEMA_VERSION:
                 raise ValueError("unsupported CI timing history version")
-            for nodeid, seconds in raw["seconds"].items():
+            for nodeid, seconds in aliases.measurements(raw["seconds"]).items():
                 if (
                     not isinstance(seconds, (int, float))
                     or not math.isfinite(seconds)
                     or seconds < 0
                 ):
                     raise ValueError("invalid timing history")
-                samples[nodeid].append(seconds)
+                if self.settings.history_aliases is None:
+                    samples[nodeid].append(seconds)
+                else:
+                    # Same canonical key and timestamp is one observation:
+                    # retries/old-new spellings cannot bias the median twice.
+                    key = (nodeid, obj.modified)
+                    observations[key] = max(observations.get(key, seconds), seconds)
+        for (nodeid, _timestamp), seconds in observations.items():
+            samples[nodeid].append(seconds)
         self.history = {n: statistics.median(s) for n, s in samples.items()}
         print(
             f"CI_RUNTIME history={len(objects)} objects tests={len(self.history)}",
@@ -196,7 +215,13 @@ class RuntimeService:
             db.execute("DELETE FROM reports")
         (self.state / "collection.json").unlink(missing_ok=True)
         (self.state / "empty-ok").unlink(missing_ok=True)
-        self.restore()
+        first_single_worker_attempt = (
+            self.settings.single_worker
+            and self.settings.store.startswith("github://")
+            and os.environ.get("GITHUB_RUN_ATTEMPT") == "1"
+        )
+        if not first_single_worker_attempt:
+            self.restore()
 
     def restore(self) -> None:
         archive = self.state / "restore.tgz"
@@ -375,7 +400,19 @@ class RuntimeService:
         self.stop.set()
         if self.uploader is not None:
             self.uploader.join()
+        if (
+            self.settings.single_worker
+            and self.collection
+            and set(self.collection) <= self.restored
+        ):
+            # A validated, fully resumed inventory already has a durable archive.
+            # No test ran, so republishing it cannot add recovery evidence.
+            return
         self.publish_quietly()
+        if self.settings.single_worker:
+            # The same durable archive already contains the measured seconds
+            # beside the inventory, lifecycle journal and required coverage.
+            return
         manifest = self.snapshot()
         if manifest.completed:
             history = self.state / "history.json"

@@ -278,6 +278,7 @@ class FileRunner:
         prior_coverage.unlink(missing_ok=True)
         coverage_inputs: list[Path] = []
         coverage_lock = Lock()
+        flush_lock = Lock()
         pending_coverage: dict[str, FileResult] = {}
         if self.coverage and service.restored:
             archive = self.state / "prior-istanbul.json.gz"
@@ -297,33 +298,45 @@ class FileRunner:
             service.record(filename, "teardown", result.recoverable, 0)
 
         def flush_coverage() -> None:
-            with coverage_lock:
-                if not pending_coverage:
+            # Serialize cumulative maps/publication without holding the short
+            # pending-results lock across a merge or network transfer. Jest's
+            # stdout consumer must keep accepting completed-file events.
+            with flush_lock:
+                with coverage_lock:
+                    batch = dict(pending_coverage)
+                    pending_coverage.clear()
+                if not batch:
                     return
-                data = [self.coverage_file(name) for name in pending_coverage]
-                changed = any(json.loads(path.read_text()) for path in data)
-                needs_upload = changed or not coverage_inputs
-                staged = self.state / "coverage-next.json"
-                if needs_upload:
-                    self.merge_coverage([*coverage_inputs, *data], staged)
-                    archive = self.state / "istanbul.json.gz"
-                    archive.write_bytes(
-                        gzip.compress(staged.read_bytes(), compresslevel=1)
-                    )
-                    # Publish one coverage prefix per checkpoint, before its
-                    # journal entries. Failed uploads leave the batch pending.
-                    service.store.upload(archive, self.coverage_key(service))
-                for filename, result in pending_coverage.items():
-                    record(filename, result)
-                if needs_upload:
-                    merged = self.state / "coverage-final.json"
-                    staged.replace(merged)
-                    coverage_inputs[:] = [merged]
+                try:
+                    data = [self.coverage_file(name) for name in batch]
+                    changed = any(json.loads(path.read_text()) for path in data)
+                    needs_upload = changed or not coverage_inputs
+                    staged = self.state / "coverage-next.json"
+                    if needs_upload:
+                        self.merge_coverage([*coverage_inputs, *data], staged)
+                        archive = self.state / "istanbul.json.gz"
+                        archive.write_bytes(
+                            gzip.compress(staged.read_bytes(), compresslevel=1)
+                        )
+                        # Coverage must reach durable storage before any of
+                        # this detached batch's passes enter the journal.
+                        service.store.upload(archive, self.coverage_key(service))
+                    for filename, result in batch.items():
+                        record(filename, result)
+                    if needs_upload:
+                        merged = self.state / "coverage-final.json"
+                        staged.replace(merged)
+                        coverage_inputs[:] = [merged]
+                except BaseException:
+                    # A transient failure must retain both the detached batch
+                    # and any files completed while its upload was in flight.
+                    with coverage_lock:
+                        pending_coverage.update(batch)
+                    raise
                 print(
-                    f"CI_RUNTIME coverage_batch files={len(pending_coverage)} uploaded={needs_upload}",
+                    f"CI_RUNTIME coverage_batch files={len(batch)} uploaded={needs_upload}",
                     flush=True,
                 )
-                pending_coverage.clear()
 
         def execute(filename: str, result: FileResult | None = None) -> bool:
             result = result or self.execute(filename)
