@@ -60,3 +60,23 @@ python -m xlsx2html path/to/example.xlsx path/to/output.html
 Increment the version in setup.py
 make build-wheel
 Copy the wheel directly to the repo you need to use it in
+
+## CI test recovery
+
+The Python compatibility matrix, headless Chrome checks, coverage and Bulgarian
+CP1251 repeat remain required. Each matrix entry runs only its selected Python
+interpreter. The vendored `ci_runtime` records setup/call/teardown timings and
+checkpoints complete passing files together with their coverage. A retry of the
+same GitHub workflow run restores that matrix entry's completed files; changed
+revision, interpreter, invocation or collection invalidates reuse. The two
+locales have separate timing plans and checkpoints.
+
+Timing history is frozen once per workflow run and matrix entry. Keep the
+current single-worker budget until an actual multi-worker comparison shows
+both lower elapsed time and lower total compute, including browser startup.
+The deterministic measured packer can then distribute work across the selected
+worker count; never independently rebuild history during a retry.
+
+Production runtime files are owned by `pacific-deploy/ci_runtime`; update with
+`python3 infra/scripts/sync_ci_runtime.py --root .. --repo xlsx2html` from that
+repository, rather than editing a vendored copy.

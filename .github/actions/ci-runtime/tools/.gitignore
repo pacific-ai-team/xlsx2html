@@ -1,0 +1,4 @@
+node_modules/
+metafile.json
+!dist/
+!dist/**

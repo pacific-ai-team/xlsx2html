@@ -55,7 +55,8 @@ setup(
     author_email="apkawa@gmail.com",
     packages=[package for package in find_packages() if package.startswith(app_name)],
     python_requires=">=3.6, <4",
-    install_requires=["six", "openpyxl>=2.4.8", "babel>=2.3.4", "packaging>=20.4"],
+    # The number-format parser imports number_re, removed in Babel 2.17.
+    install_requires=["six", "openpyxl>=2.4.8", "babel>=2.3.4,<2.17", "packaging>=20.4"],
     zip_safe=False,
     include_package_data=True,
     license="MIT",

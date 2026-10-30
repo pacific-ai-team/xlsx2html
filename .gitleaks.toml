@@ -1,0 +1,17 @@
+# Retain all standard secret rules. The generated official SDK includes two
+# public Azure constants from the locked dependency sources listed below.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public Azure CRC64 table and development-storage constants in the official SDK bundle"
+condition = "AND"
+paths = ['''^\.github/actions/ci-runtime/tools/dist/artifact\.cjs$''']
+regexTarget = "secret"
+# @azure/storage-common 12.5.0: dist/commonjs/crc64.js;
+# @azure/storage-common 12.5.0 and @azure/storage-blob 12.34.0:
+# dist/commonjs/utils/constants.js (documented local development storage).
+regexes = [
+  '''^sgByAFNgIMIAUgBzYCCAsgACADQQNyNgIEIAAgA2oiByAEQQN0IgQgA2siBUEBcjYCBCAAIARqIAU2AgACQ$''',
+  '''^Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==$''',
+]

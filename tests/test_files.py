@@ -2,6 +2,8 @@
 import io
 import os
 import time
+from contextlib import closing
+from pathlib import Path
 
 import openpyxl
 import pytest
@@ -22,34 +24,33 @@ XLSX_FILE = get_fixture("example.xlsx")
 
 def test_xlsx2html(temp_file):
     out_file = temp_file()
-    xlsx2html(XLSX_FILE, out_file, locale="en")
-    result_html = open(out_file).read()
+    xlsx2html(XLSX_FILE, out_file, locale="en").close()
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html
 
 
 def test_use_streams():
-    xlsx_file = open(XLSX_FILE, "rb")
-    out_file = io.StringIO()
-    xlsx2html(xlsx_file, out_file, locale="en")
-    assert out_file.tell() > 0
-    out_file.seek(0)
-    result_html = out_file.read()
-    assert result_html
+    with open(XLSX_FILE, "rb") as xlsx_file, io.StringIO() as out_file:
+        xlsx2html(xlsx_file, out_file, locale="en")
+        assert out_file.tell() > 0
+        out_file.seek(0)
+        result_html = out_file.read()
+        assert result_html
 
 
 def test_default_output():
-    xlsx_file = open(XLSX_FILE, "rb")
-    out_file = xlsx2html(xlsx_file, locale="en")
-    assert out_file.tell() > 0
-    out_file.seek(0)
-    result_html = out_file.read()
-    assert result_html
+    with open(XLSX_FILE, "rb") as xlsx_file:
+        with xlsx2html(xlsx_file, locale="en") as out_file:
+            assert out_file.tell() > 0
+            out_file.seek(0)
+            result_html = out_file.read()
+            assert result_html
 
 
 def test_hyperlink(temp_file):
     out_file = temp_file()
-    xlsx2html(get_fixture("hyperlinks.xlsx"), out_file, locale="en", parse_formula=True)
-    result_html = open(out_file).read()
+    xlsx2html(get_fixture("hyperlinks.xlsx"), out_file, locale="en", parse_formula=True).close()
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html
 
 
@@ -57,8 +58,8 @@ def test_issue_30_cell_range_value(temp_file):
     out_file = temp_file()
     xlsx2html(
         get_fixture("cell_range_value.xlsx"), out_file, locale="en", parse_formula=True
-    )
-    result_html = open(out_file).read()
+    ).close()
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html
 
 
@@ -71,8 +72,8 @@ def test_issue_43(temp_file):
     """
 
     out_file = temp_file()
-    xlsx2html(get_fixture("fileoutpart12.xlsx"), out_file, parse_formula=True)
-    result_html = open(out_file).read()
+    xlsx2html(get_fixture("fileoutpart12.xlsx"), out_file, parse_formula=True).close()
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html
 
     stream = xlsx2html(
@@ -82,10 +83,10 @@ def test_issue_43(temp_file):
     result_html = stream.read()
     assert result_html
 
-    with pytest.raises(UnicodeError) as e:
-        # simulate open system encoding
-        out_file = open(temp_file(), "w", encoding="cp1251")
-        xlsx2html(get_fixture("fileoutpart12.xlsx"), out_file, parse_formula=True)
+    with open(temp_file(), "w", encoding="cp1251") as out_file:
+        with pytest.raises(UnicodeError) as e:
+            # simulate open system encoding
+            xlsx2html(get_fixture("fileoutpart12.xlsx"), out_file, parse_formula=True)
     assert "output must be opened with encoding='utf-8'" == str(e.value)
 
 
@@ -94,15 +95,15 @@ def test_issue_x000D(temp_file):
     Fix _x000D_ issue
     https://stackoverflow.com/questions/29976234/openpyxl-unicode-values
     """
-    wb = openpyxl.load_workbook(get_fixture("fileoutpart12.xlsx"))
-    ws = wb.worksheets[0]
-    cell = ws["A1"]
-    # opps :3
-    assert cell.value == "Parameter _x000D_"
-    data = worksheet_to_data(ws)
-    data_cell = data["rows"][0][0]
-    assert data_cell["value"] == "Parameter \r"
-    assert data_cell["formatted_value"] == "Parameter \r"
+    with closing(openpyxl.load_workbook(get_fixture("fileoutpart12.xlsx"))) as wb:
+        ws = wb.worksheets[0]
+        cell = ws["A1"]
+        # opps :3
+        assert cell.value == "Parameter _x000D_"
+        data = worksheet_to_data(ws)
+        data_cell = data["rows"][0][0]
+        assert data_cell["value"] == "Parameter \r"
+        assert data_cell["formatted_value"] == "Parameter \r"
 
 
 def page_has_loaded(self):
@@ -119,7 +120,7 @@ def page_has_loaded(self):
 def test_screenshot_diff(temp_file, browser, screenshot_regression):
     browser.driver.set_window_size(1280, 1024)
     out_file = temp_file()
-    xlsx2html(XLSX_FILE, out_file, locale="en")
+    xlsx2html(XLSX_FILE, out_file, locale="en").close()
     browser.visit("file://" + out_file)
     # Wait loading page
     from selenium.webdriver.support.wait import WebDriverWait
@@ -130,25 +131,25 @@ def test_screenshot_diff(temp_file, browser, screenshot_regression):
     print("Window size", browser.driver.get_window_size())
     screenshot_file = temp_file(extension=".png")
     browser.driver.save_screenshot(screenshot_file)
-    im = Image.open(screenshot_file)
-    assert im.size == (1280, 1024)
+    with Image.open(screenshot_file) as im:
+        assert im.size == (1280, 1024)
     # End debug CI
     screenshot_regression()
 
 
 def test_multiple_sheets(temp_file):
     out_file = temp_file()
-    xlsx2html(XLSX_FILE, out_file, locale="en", sheet=[0, 2])  # Can use index
-    result_html = open(out_file).read()
+    xlsx2html(XLSX_FILE, out_file, locale="en", sheet=[0, 2]).close()  # Can use index
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html.count("</table>") == 2
 
     # By names
-    wb = openpyxl.load_workbook(XLSX_FILE)
-    xlsx2html(XLSX_FILE, out_file, locale="en", sheet=wb.sheetnames)  # Can use index
-    result_html = open(out_file).read()
+    with closing(openpyxl.load_workbook(XLSX_FILE)) as wb:
+        xlsx2html(XLSX_FILE, out_file, locale="en", sheet=wb.sheetnames).close()
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html.count("</table>") == 3
 
     out_file = temp_file()
-    xlsx2html(XLSX_FILE, out_file, locale="en", sheet=-1)  # All sheets
-    result_html = open(out_file).read()
+    xlsx2html(XLSX_FILE, out_file, locale="en", sheet=-1).close()  # All sheets
+    result_html = Path(out_file).read_text(encoding="utf-8")
     assert result_html.count("</table>") == 3

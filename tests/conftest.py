@@ -52,11 +52,11 @@ def splinter_window_size():
 
 
 @pytest.fixture(scope="session")
-def splinter_headless(request):
+def splinter_headless(request, splinter_webdriver):
     """Flag to start the browser in headless mode."""
-    if request.config.option.splinter_headless:
-        return "old"
-    return False
+    # Splinter 0.21 treats this as a bool and discards the "old" mode string.
+    # Chrome's pinned mode is configured explicitly in its options below.
+    return request.config.option.splinter_headless and splinter_webdriver != "chrome"
 
 
 @pytest.fixture(scope="session")
@@ -78,6 +78,9 @@ def splinter_driver_kwargs(request, splinter_webdriver, splinter_window_size):
         from selenium.webdriver.chrome.options import Options as ChromeOptions
 
         options = ChromeOptions()
+        if request.config.option.splinter_headless:
+            options.add_argument("--headless=old")
+            options.add_argument("--disable-gpu")
         options.add_argument(f"--window-size={'x'.join(map(str,splinter_window_size))}")
         options.add_argument(f"--force-device-scale-factor=1")
         kw["options"] = options
