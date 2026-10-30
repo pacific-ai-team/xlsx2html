@@ -23,7 +23,7 @@ def test_to_datauri(fixture_file):
 def test_image(temp_file, browser, screenshot_regression, fixture_file):
     browser.driver.set_window_size(1280, 1024)
     out_file = temp_file()
-    xlsx2html(fixture_file("image.xlsx"), out_file, locale="en", parse_formula=True)
+    xlsx2html(fixture_file("image.xlsx"), out_file, locale="en", parse_formula=True).close()
     browser.visit("file://" + out_file)
     print('Window size', browser.driver.get_window_size())
     screenshot_regression()
