@@ -20,6 +20,7 @@ import subprocess
 import tarfile
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
@@ -72,6 +73,7 @@ class RuntimeService:
         self.stop = threading.Event()
         self.uploader: threading.Thread | None = None
         self.publish_lock = threading.Lock()
+        self.before_publish: Callable[[], None] | None = None
 
     @staticmethod
     def groups(
@@ -319,6 +321,8 @@ class RuntimeService:
 
     def publish(self) -> None:
         with self.publish_lock:
+            if self.before_publish is not None:
+                self.before_publish()
             # Journal first, then coverage: each journal pass was recorded
             # only after the worker saved its coverage. The reverse read
             # order could snapshot an older trace beside newer pass records.

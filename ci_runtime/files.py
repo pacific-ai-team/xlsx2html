@@ -95,7 +95,11 @@ class FileRunner:
             ]
         ]
         if self.coverage:
-            config.update(collectCoverage=True, coverageReporters=[])
+            # The final merge inventories the complete product once. Each
+            # measured lane only instruments modules its tests actually load.
+            config.update(
+                collectCoverage=True, collectCoverageFrom=[], coverageReporters=[]
+            )
         args = [
             self.node,
             "node_modules/jest/bin/jest.js",
@@ -263,6 +267,7 @@ class FileRunner:
         prior_coverage.unlink(missing_ok=True)
         coverage_inputs: list[Path] = []
         coverage_lock = Lock()
+        pending_coverage: dict[str, FileResult] = {}
         if self.coverage and service.restored:
             archive = self.state / "prior-istanbul.json.gz"
             if service.store.download(self.coverage_key(service), archive):
@@ -274,36 +279,54 @@ class FileRunner:
         selected, restored = service.select(self.collect(patterns))
         if self.coverage and not restored:
             coverage_inputs.clear()
-        service.start_uploader()
+
+        def record(filename: str, result: FileResult) -> None:
+            service.record(filename, "setup", result.recoverable, 0)
+            service.record(filename, "call", result.recoverable, result.seconds)
+            service.record(filename, "teardown", result.recoverable, 0)
+
+        def flush_coverage() -> None:
+            with coverage_lock:
+                if not pending_coverage:
+                    return
+                data = [self.coverage_file(name) for name in pending_coverage]
+                changed = any(json.loads(path.read_text()) for path in data)
+                needs_upload = changed or not coverage_inputs
+                staged = self.state / "coverage-next.json"
+                if needs_upload:
+                    self.merge_coverage([*coverage_inputs, *data], staged)
+                    archive = self.state / "istanbul.json.gz"
+                    archive.write_bytes(
+                        gzip.compress(staged.read_bytes(), compresslevel=1)
+                    )
+                    # Publish one coverage prefix per checkpoint, before its
+                    # journal entries. Failed uploads leave the batch pending.
+                    service.store.upload(archive, self.coverage_key(service))
+                for filename, result in pending_coverage.items():
+                    record(filename, result)
+                if needs_upload:
+                    merged = self.state / "coverage-final.json"
+                    staged.replace(merged)
+                    coverage_inputs[:] = [merged]
+                print(
+                    f"CI_RUNTIME coverage_batch files={len(pending_coverage)} uploaded={needs_upload}",
+                    flush=True,
+                )
+                pending_coverage.clear()
 
         def execute(filename: str, result: FileResult | None = None) -> bool:
             result = result or self.execute(filename)
-
-            def record() -> None:
-                service.record(filename, "setup", result.recoverable, 0)
-                service.record(filename, "call", result.recoverable, result.seconds)
-                service.record(filename, "teardown", result.recoverable, 0)
-
             if self.coverage and result.success:
+                self.validate_coverage(self.coverage_file(filename))
                 with coverage_lock:
-                    data = self.coverage_file(filename)
-                    self.validate_coverage(data)
-                    if json.loads(data.read_text()) or not coverage_inputs:
-                        merged = self.state / "coverage-final.json"
-                        self.merge_coverage([*coverage_inputs, data], merged)
-                        coverage_inputs[:] = [merged]
-                        archive = self.state / "istanbul.json.gz"
-                        archive.write_bytes(
-                            gzip.compress(merged.read_bytes(), compresslevel=1)
-                        )
-                        # A coverage snapshot reaches storage before any completed
-                        # file can enter an uploaded journal checkpoint. A file
-                        # importing no product code reuses the existing snapshot.
-                        service.store.upload(archive, self.coverage_key(service))
-                    record()
+                    pending_coverage[filename] = result
             else:
-                record()
+                record(filename, result)
             return result.success
+
+        if self.coverage:
+            service.before_publish = flush_coverage
+        service.start_uploader()
 
         try:
             ordered = sorted(selected, key=lambda n: (-service.history.get(n, 0), n))
@@ -312,6 +335,8 @@ class FileRunner:
             else:
                 with ThreadPoolExecutor(max_workers=jobs) as pool:
                     results = list(pool.map(execute, ordered))
+            if self.coverage:
+                flush_coverage()
             if self.coverage and all(results):
                 self.merge_coverage(
                     coverage_inputs,
