@@ -95,11 +95,9 @@ class FileRunner:
             ]
         ]
         if self.coverage:
-            # The final merge inventories the complete product once. Each
-            # measured lane only instruments modules its tests actually load.
-            config.update(
-                collectCoverage=True, collectCoverageFrom=[], coverageReporters=[]
-            )
+            # Keep the product allowlist: an empty collectCoverageFrom also
+            # instruments generated SDKs that the repository excludes.
+            config.update(collectCoverage=True, coverageReporters=[])
         args = [
             self.node,
             "node_modules/jest/bin/jest.js",

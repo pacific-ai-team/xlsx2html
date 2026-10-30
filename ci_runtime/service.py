@@ -21,6 +21,7 @@ import tarfile
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 
@@ -184,7 +185,9 @@ class RuntimeService:
     def initialise(self) -> None:
         # This directory is attempt-local (emptyDir/RUNNER_TEMP), never a
         # dependency cache. Only a validated remote manifest can skip a test.
-        with sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS) as db:
+        with closing(
+            sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS)
+        ) as db, db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS reports "
                 "(nodeid TEXT, stage TEXT, passed INTEGER, seconds REAL, "
@@ -264,14 +267,18 @@ class RuntimeService:
         return selected, resumed
 
     def record(self, nodeid: str, stage: str, passed: bool, seconds: float) -> None:
-        with sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS) as db:
+        with closing(
+            sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS)
+        ) as db, db:
             db.execute(
                 "INSERT OR REPLACE INTO reports VALUES (?, ?, ?, ?)",
                 (nodeid, stage, int(passed), seconds),
             )
 
     def snapshot(self) -> RuntimeManifest:
-        with sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS) as db:
+        with closing(
+            sqlite3.connect(self.db, timeout=SQLITE_TIMEOUT_SECONDS)
+        ) as db, db:
             rows = db.execute(
                 "SELECT nodeid, stage, passed, seconds FROM reports"
             ).fetchall()
