@@ -1,0 +1,3 @@
+# Preserve verbatim generated upstream licenses and template literals.
+# Keep textual diffs and every other whitespace check enabled.
+dist/* whitespace=-blank-at-eol conflict-marker-size=32

@@ -2,5 +2,16 @@
   "private": true,
   "dependencies": {
     "@actions/artifact": "6.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check",
+    "verify": "node verify.mjs"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

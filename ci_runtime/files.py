@@ -85,9 +85,14 @@ class FileRunner:
         return files
 
     def execute_jest_batch(self, files: list[str], jobs: int, record) -> list[bool]:
+        aggregate = self.state / "jest-aggregate" / "coverage-final.json"
+        aggregate.unlink(missing_ok=True)
         if not files:
             return []
         config = self.jest_config()
+        order = self.state / "jest-order.json"
+        order.write_text(json.dumps(files))
+        config["testSequencer"] = str(Path(__file__).with_name("jest_sequencer.mjs"))
         config["reporters"] = [
             [
                 str(Path(__file__).with_name("jest_reporter.mjs")),
@@ -97,7 +102,11 @@ class FileRunner:
         if self.coverage:
             # Keep the product allowlist: an empty collectCoverageFrom also
             # instruments generated SDKs that the repository excludes.
-            config.update(collectCoverage=True, coverageReporters=[])
+            config.update(
+                collectCoverage=True,
+                coverageReporters=["json"],
+                coverageDirectory=str(aggregate.parent),
+            )
         args = [
             self.node,
             "node_modules/jest/bin/jest.js",
@@ -114,7 +123,7 @@ class FileRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=self.environment,
+            env={**self.environment, "CI_RUNTIME_JEST_ORDER": str(order)},
         ) as process:
             assert process.stdout is not None
             for line in process.stdout:
@@ -136,6 +145,10 @@ class FileRunner:
             code = process.wait()
         if completed != set(files) or code != 0:
             results.append(False)
+        elif self.coverage:
+            # This is Jest's ordinary complete product map, with its original
+            # allowlist and untested-file inventory. Reuse it in the final gate.
+            self.validate_coverage(aggregate)
         return results
 
     def execute(self, filename: str) -> FileResult:
@@ -457,6 +470,7 @@ def main(args: list[str]) -> int:
             description="Merge shard coverage with the complete product inventory"
         )
         parser.add_argument("--input", action="append", required=True)
+        parser.add_argument("--inventory-json", type=Path)
         parser.add_argument(
             "--output", type=Path, default=Path("coverage/coverage-final.json")
         )
@@ -468,9 +482,27 @@ def main(args: list[str]) -> int:
             runner.validate_coverage(filename)
         remapped = runner.state / "remapped-shards.json"
         runner.merge_coverage(inputs, remapped, remap=True)
-        runner.merge_coverage(
-            [runner.coverage_inventory(), remapped], options.output.resolve(), True
-        )
+        inventory = options.inventory_json
+        if inventory is None or not inventory.is_file():
+            # A retry can restore every test before any pool runs. It still
+            # needs a full product inventory on this new machine.
+            inventory = runner.coverage_inventory()
+        else:
+            runner.validate_coverage(inventory)
+            data = json.loads(inventory.read_text())
+            if not data:
+                raise ValueError("whole-product coverage inventory is empty")
+            # Keep this map's complete denominator without counting current
+            # test hits twice; the durable file maps own all hit counts.
+            for coverage in data.values():
+                for kind in ("s", "f"):
+                    coverage[kind] = {key: 0 for key in coverage[kind]}
+                coverage["b"] = {
+                    key: [0] * len(hits) for key, hits in coverage["b"].items()
+                }
+            inventory = runner.state / "complete-inventory.json"
+            inventory.write_text(json.dumps(data))
+        runner.merge_coverage([inventory, remapped], options.output.resolve(), True)
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", choices=["node", "vitest", "jest"], required=True)

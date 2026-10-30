@@ -1,0 +1,17 @@
+{
+  "chainsaw@0.1.0": {
+    "file": "license-sources/chainsaw-0.1.0.txt",
+    "source": "https://metadata.ftp-master.debian.org/changelogs/main/n/node-chainsaw/node-chainsaw_0.1.0-2_copyright",
+    "sha256": "e6981d395942f287c9503968dfefda9175deb4bcd2b2ff22a57cd9655ea852e5"
+  },
+  "buffers@0.1.1": {
+    "file": "license-sources/buffers-0.1.1.txt",
+    "source": "https://metadata.ftp-master.debian.org/changelogs/main/n/node-buffers/node-buffers_0.1.1-5_copyright",
+    "sha256": "7ed63688e5bc3c442bcebf756f04a4be5337a51ec8d4b51804349977a9667f0a"
+  },
+  "@nodable/entities@3.1.0": {
+    "file": "license-sources/nodable-entities-3.1.0.txt",
+    "source": "https://raw.githubusercontent.com/nodable/val-parsers/ac48e7ea591da372be023a481875c747535812b3/LICENSE",
+    "sha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40"
+  }
+}
